@@ -1,3 +1,5 @@
+// Copyright (c) 2014-2018 Zano Project
+// Copyright (c) 2014-2018 The Louisdor Project
 // Copyright (c) 2012-2013 The Cryptonote developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -7,6 +9,7 @@
 #include <list>
 #include <set>
 #include <map>
+#include <iterator>
 #include <boost/foreach.hpp>
 //#include <boost/bimap.hpp>
 //#include <boost/bimap/multiset_of.hpp>
@@ -23,10 +26,11 @@
 #include "syncobj.h"
 #include "net/local_ip.h"
 #include "p2p_protocol_defs.h"
-#include "cryptonote_config.h"
+#include "currency_core/currency_config.h"
 #include "net_peerlist_boost_serialization.h"
+#include "common/boost_serialization_helper.h"
 
-
+#define CURRENT_PEERLIST_STORAGE_ARCHIVE_VER    (CURRENCY_FORMATION_VERSION + 7)
 
 namespace nodetool
 {
@@ -120,21 +124,14 @@ namespace nodetool
   public:    
     
     template <class Archive, class t_version_type>
-    void serialize(Archive &a,  const t_version_type ver)
+    void serialize(Archive &ar,  const t_version_type ver)
     {
-      if(ver < 3)
-        return;
+      if(ver < CURRENT_PEERLIST_STORAGE_ARCHIVE_VER)
+        throw std::runtime_error("not supported storage format");
+      CHECK_PROJECT_NAME();
       CRITICAL_REGION_LOCAL(m_peerlist_lock);
-      if(ver < 4)
-      {
-        //loading data from old storage
-        peers_indexed_old pio; 
-        a & pio;
-        peers_indexed_from_old(pio, m_peers_white);
-        return;
-      }
-      a & m_peers_white;
-      a & m_peers_gray;
+      ar & m_peers_white;
+      ar & m_peers_gray;
     }
 
   private: 
@@ -153,7 +150,35 @@ namespace nodetool
   inline
   bool peerlist_manager::init(bool allow_local_ip)
   {
+    time_t now = 0;
+    time(&now);
     m_allow_local_ip = allow_local_ip;
+    
+    //adjust local time if it somehow was shifted
+    CRITICAL_REGION_LOCAL(m_peerlist_lock);
+    peers_indexed::index<by_time>::type& by_time_index = m_peers_white.get<by_time>();
+    for(auto& v1: by_time_index)
+    {
+      if (v1.last_seen > now)
+      {
+        LOG_PRINT_L0("Local m_peers_white entries detected in future, cleaning peerlist.");
+        by_time_index.clear();
+        break;
+      }
+    }
+
+    peers_indexed::index<by_time>::type& by_time_index_g = m_peers_gray.get<by_time>();
+    for (auto& v1 : by_time_index_g)
+    {
+      if (v1.last_seen > now)
+      {
+        LOG_PRINT_L0("Local m_peers_gray entries detected in future, cleaning peerlist.");
+        by_time_index_g.clear();
+        break;
+      }
+    }
+
+
     return true;
   } 
   //--------------------------------------------------------------------------------------------------
@@ -180,6 +205,7 @@ namespace nodetool
   //--------------------------------------------------------------------------------------------------
   inline void peerlist_manager::trim_white_peerlist()
   {
+    CRITICAL_REGION_LOCAL(m_peerlist_lock);
     while(m_peers_gray.size() > P2P_LOCAL_GRAY_PEERLIST_LIMIT)
     {
       peers_indexed::index<by_time>::type& sorted_index=m_peers_gray.get<by_time>();
@@ -189,6 +215,7 @@ namespace nodetool
   //--------------------------------------------------------------------------------------------------
   inline void peerlist_manager::trim_gray_peerlist()
   {
+    CRITICAL_REGION_LOCAL(m_peerlist_lock);
     while(m_peers_white.size() > P2P_LOCAL_WHITE_PEERLIST_LIMIT)
     {
       peers_indexed::index<by_time>::type& sorted_index=m_peers_white.get<by_time>();
@@ -217,7 +244,7 @@ namespace nodetool
       return false;
 
     peers_indexed::index<by_time>::type& by_time_index = m_peers_white.get<by_time>();
-    p = *epee::misc_utils::move_it_backward(--by_time_index.end(), i);    
+    p = *std::prev(--by_time_index.end(), i);
     return true;
   }
   //--------------------------------------------------------------------------------------------------
@@ -229,7 +256,7 @@ namespace nodetool
       return false;
 
     peers_indexed::index<by_time>::type& by_time_index = m_peers_gray.get<by_time>();
-    p = *epee::misc_utils::move_it_backward(--by_time_index.end(), i);    
+    p = *std::prev(--by_time_index.end(), i);
     return true;
   }
   //--------------------------------------------------------------------------------------------------
@@ -368,4 +395,4 @@ namespace nodetool
   //--------------------------------------------------------------------------------------------------
 }
 
-BOOST_CLASS_VERSION(nodetool::peerlist_manager, 4)
+BOOST_CLASS_VERSION(nodetool::peerlist_manager, CURRENT_PEERLIST_STORAGE_ARCHIVE_VER)

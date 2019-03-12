@@ -1,3 +1,5 @@
+// Copyright (c) 2014-2018 Zano Project
+// Copyright (c) 2014-2018 The Louisdor Project
 // Copyright (c) 2012-2013 The Cryptonote developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -18,6 +20,23 @@
 
 namespace crypto {
 
+  DISABLE_GCC_AND_CLANG_WARNING(strict-aliasing)
+  const unsigned char I_[32] = { 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+  const unsigned char L_[32] = { 0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10 };
+
+  const key_image I = *reinterpret_cast<const key_image*>(&I_);
+  const key_image L = *reinterpret_cast<const key_image*>(&L_);
+
+  struct random_init_singleton
+  {
+    random_init_singleton()
+    {
+      grant_random_initialize();
+    }
+  };
+
+  random_init_singleton init_rand; //place initializer here to avoid grant_random_initialize first call after threads will be possible(local static variables init is not thread-safe)
+
   using std::abort;
   using std::int32_t;
   using std::int64_t;
@@ -31,6 +50,7 @@ namespace crypto {
 #include "crypto-ops.h"
 #include "random.h"
   }
+  
 
   mutex random_lock;
 
@@ -57,7 +77,38 @@ namespace crypto {
     memcpy(&res, tmp, 32);
   }
 
-  static inline void hash_to_scalar(const void *data, size_t length, ec_scalar &res) {
+   void crypto_ops::keys_from_default(unsigned char* a_part, public_key &pub, secret_key &sec, size_t brain_wallet_seed_size)
+   {
+     unsigned char tmp[64] = { 0 };
+
+     if (!(sizeof(tmp) >= brain_wallet_seed_size))
+     {
+       throw std::runtime_error("size mismatch");
+     }
+
+     memcpy(tmp, a_part, brain_wallet_seed_size);
+
+     cn_fast_hash(tmp, 32, (char*)&tmp[32]);
+
+     sc_reduce(tmp);
+     memcpy(&sec, tmp, 32);
+     ge_p3 point;
+     ge_scalarmult_base(&point, &sec);
+     ge_p3_tobytes(&pub, &point);
+   }
+
+   void crypto_ops::generate_brain_keys(public_key &pub, secret_key &sec, std::string& seed, size_t brain_wallet_seed_size)
+  {
+    std::vector<unsigned char> tmp_vector;
+    tmp_vector.resize(brain_wallet_seed_size, 0);
+    unsigned char *tmp = &tmp_vector[0];
+    generate_random_bytes(brain_wallet_seed_size, tmp);
+    seed.assign((const char*)tmp, brain_wallet_seed_size);
+    keys_from_default(tmp, pub, sec, brain_wallet_seed_size);
+  }
+
+  static inline void hash_to_scalar(const void *data, size_t length, ec_scalar &res) 
+  {
     cn_fast_hash(data, length, reinterpret_cast<hash &>(res));
     sc_reduce32(&res);
   }
@@ -70,9 +121,41 @@ namespace crypto {
     ge_p3_tobytes(&pub, &point);
   }
 
+  void crypto_ops::dependent_key(const secret_key& first, secret_key& second)
+  {
+    hash_to_scalar(&first, 32, second);
+    if (sc_check((unsigned char*)&second) != 0)
+      throw std::runtime_error("Failed to derive key");
+  }
+
+
   bool crypto_ops::check_key(const public_key &key) {
     ge_p3 point;
     return ge_frombytes_vartime(&point, &key) == 0;
+  }
+
+  /*
+  Fix discovered by Monero Lab and suggested by "fluffypony" (bitcointalk.org)
+  */
+  key_image scalarmult_key(const key_image & P, const key_image & a)
+  {
+    ge_p3 A = ge_p3();
+    ge_p2 R = ge_p2();
+    // maybe use assert instead?
+    ge_frombytes_vartime(&A, reinterpret_cast<const unsigned char*>(&P));
+    ge_scalarmult(&R, reinterpret_cast<const unsigned char*>(&a), &A);
+    key_image a_p = key_image();
+    ge_tobytes(reinterpret_cast<unsigned char*>(&a_p), &R);
+    return a_p;
+  }
+
+  bool crypto_ops::validate_key_image(const key_image& ki)
+  {
+    if (!(scalarmult_key(ki, L) == I)) 
+    {
+      return false;
+    }
+    return true;
   }
 
   bool crypto_ops::secret_key_to_public_key(const secret_key &sec, public_key &pub) {
@@ -179,7 +262,7 @@ namespace crypto {
     buf.h = prefix_hash;
     buf.key = pub;
     if (ge_frombytes_vartime(&tmp3, &pub) != 0) {
-      abort();
+      return false;
     }
     if (sc_check(&sig.c) != 0 || sc_check(&sig.r) != 0) {
       return false;
@@ -212,16 +295,18 @@ namespace crypto {
 
 PUSH_WARNINGS
 DISABLE_VS_WARNINGS(4200)
+struct rs_comm_entry
+{
+  ec_point a, b;
+};
   struct rs_comm {
     hash h;
-    struct {
-      ec_point a, b;
-    } ab[];
+    struct rs_comm_entry ab[];
   };
 POP_WARNINGS
 
   static inline size_t rs_comm_size(size_t pubs_count) {
-    return sizeof(rs_comm) + pubs_count * sizeof(rs_comm().ab[0]);
+    return sizeof(rs_comm)+pubs_count * sizeof(rs_comm_entry);
   }
 
   void crypto_ops::generate_ring_signature(const hash &prefix_hash, const key_image &image,
@@ -301,7 +386,7 @@ POP_WARNINGS
 #endif
     if (ge_frombytes_vartime(&image_unp, &image) != 0) {
       return false;
-    }
+    } 
     ge_dsm_precomp(image_pre, &image_unp);
     sc_0(&sum);
     buf->h = prefix_hash;
@@ -312,7 +397,7 @@ POP_WARNINGS
         return false;
       }
       if (ge_frombytes_vartime(&tmp3, &*pubs[i]) != 0) {
-        abort();
+        return false;
       }
       ge_double_scalarmult_base_vartime(&tmp2, &sig[i].c, &tmp3, &sig[i].r);
       ge_tobytes(&buf->ab[i].a, &tmp2);

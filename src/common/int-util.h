@@ -1,3 +1,5 @@
+// Copyright (c) 2014-2018 Zano Project
+// Copyright (c) 2014-2018 The Louisdor Project
 // Copyright (c) 2012-2013 The Cryptonote developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -11,7 +13,9 @@
 #include <sys/param.h>
 
 #if defined(_MSC_VER)
+#include <intrin.h>
 #include <stdlib.h>
+
 
 static inline uint32_t rol32(uint32_t x, int r) {
   static_assert(sizeof(uint32_t) == sizeof(unsigned int), "this code assumes 32-bit integers");
@@ -42,7 +46,7 @@ static inline uint64_t lo_dword(uint64_t val) {
   return val & 0xFFFFFFFF;
 }
 
-static inline uint64_t mul128(uint64_t multiplier, uint64_t multiplicand, uint64_t* product_hi) {
+static inline uint64_t mul128_manually(uint64_t multiplier, uint64_t multiplicand, uint64_t* product_hi) {
   // multiplier   = ab = a * 2^32 + b
   // multiplicand = cd = c * 2^32 + d
   // ab * cd = a * c * 2^64 + (a * d + b * c) * 2^32 + b * d
@@ -75,7 +79,7 @@ static inline uint64_t div_with_reminder(uint64_t dividend, uint32_t divisor, ui
 }
 
 // Long division with 2^32 base
-static inline uint32_t div128_32(uint64_t dividend_hi, uint64_t dividend_lo, uint32_t divisor, uint64_t* quotient_hi, uint64_t* quotient_lo) {
+static inline uint32_t div128_32_manually(uint64_t dividend_hi, uint64_t dividend_lo, uint32_t divisor, uint64_t* quotient_hi, uint64_t* quotient_lo) {
   uint64_t dividend_dwords[4];
   uint32_t remainder = 0;
 
@@ -92,6 +96,34 @@ static inline uint32_t div128_32(uint64_t dividend_hi, uint64_t dividend_lo, uin
   return remainder;
 }
 
+static inline uint64_t mul128(uint64_t multiplier, uint64_t multiplicand, uint64_t* product_hi)
+{
+// #if defined(_MSC_VER)
+//   return _umul128(multiplier, multiplicand, product_hi);
+// #elif defined(__GNUC__)
+//   __uint128_t product = ((__uint128_t)multiplier) * multiplicand;
+//   *product_hi = (uint64_t)(product >> 64);
+//   return ((uint64_t)product) & ~(UINT64_C(0));
+// #else
+  return mul128_manually(multiplier, multiplicand, product_hi);
+//#endif*/
+}
+//*/
+
+static inline uint32_t div128_32(uint64_t dividend_hi, uint64_t dividend_lo, uint32_t divisor, uint64_t* quotient_hi, uint64_t* quotient_lo)
+{
+// #if defined(__GNUC__)
+//   __uint128_t dividend = (((__uint128_t)dividend_hi) << 64) | dividend_lo;
+//   __uint128_t quotient = dividend / divisor;
+//   __uint128_t reminder = dividend % divisor;
+//   *quotient_hi = (uint64_t)(quotient >> 64);
+//   *quotient_lo = ((uint64_t)quotient) & ~(UINT64_C(0));
+//   return (uint32_t)reminder;
+// #else
+  return div128_32_manually(dividend_hi, dividend_lo, divisor, quotient_hi, quotient_lo);
+//#endif
+}
+//*/
 #define IDENT32(x) ((uint32_t) (x))
 #define IDENT64(x) ((uint64_t) (x))
 

@@ -35,9 +35,9 @@
 #include <boost/utility/value_init.hpp>
 #include <boost/asio/deadline_timer.hpp>
 #include "misc_language.h"
-#include "pragma_comp_defs.h"
+#include "warnings.h"
 
-PRAGMA_WARNING_PUSH
+PUSH_WARNINGS
 namespace epee
 {
 namespace net_utils
@@ -45,7 +45,7 @@ namespace net_utils
   /************************************************************************/
   /*                                                                      */
   /************************************************************************/
-PRAGMA_WARNING_DISABLE_VS(4355)
+DISABLE_VS_WARNINGS(4355)
 
   template<class t_protocol_handler>
   connection<t_protocol_handler>::connection(boost::asio::io_service& io_service,
@@ -60,7 +60,7 @@ PRAGMA_WARNING_DISABLE_VS(4355)
   {
     boost::interprocess::ipcdetail::atomic_inc32(&m_ref_sockets_count);
   }
-PRAGMA_WARNING_DISABLE_VS(4355)
+DISABLE_VS_WARNINGS(4355)
   //---------------------------------------------------------------------------------
   template<class t_protocol_handler>
   connection<t_protocol_handler>::~connection()
@@ -73,6 +73,8 @@ PRAGMA_WARNING_DISABLE_VS(4355)
 
     LOG_PRINT_L3("[sock " << socket_.native_handle() << "] Socket destroyed");
     boost::interprocess::ipcdetail::atomic_dec32(&m_ref_sockets_count);
+    VALIDATE_MUTEX_IS_FREE(m_send_que_lock);
+    VALIDATE_MUTEX_IS_FREE(m_self_refs_lock);
   }
   //---------------------------------------------------------------------------------
   template<class t_protocol_handler>
@@ -103,13 +105,18 @@ PRAGMA_WARNING_DISABLE_VS(4355)
     // Use safe_shared_from_this, because of this is public method and it can be called on the object being deleted
     auto self = safe_shared_from_this();
     if(!self)
+    {
+      LOG_PRINT_RED("Failed to start conntection, failed to call safe_shared_from_this", LOG_LEVEL_2);
       return false;
+    }
 
     m_is_multithreaded = is_multithreaded;
 
     boost::system::error_code ec;
     auto remote_ep = socket_.remote_endpoint(ec);
-    CHECK_AND_NO_ASSERT_MES(!ec, false, "Failed to get remote endpoint: " << ec.message() << ':' << ec.value());
+    CHECK_AND_NO_ASSERT_MES(!m_was_shutdown, false, "was shutdown on start connection");
+    
+    CHECK_AND_NO_ASSERT_MES_LEVEL(!ec, false, "Failed to get remote endpoint(" << (is_income?"INT":"OUT") << "): " << ec.message() << ':' << ec.value(), LOG_LEVEL_2);
 
     auto local_ep = socket_.local_endpoint(ec);
     CHECK_AND_NO_ASSERT_MES(!ec, false, "Failed to get local endpoint: " << ec.message() << ':' << ec.value());
@@ -118,13 +125,15 @@ PRAGMA_WARNING_DISABLE_VS(4355)
     long ip_ = boost::asio::detail::socket_ops::host_to_network_long(remote_ep.address().to_v4().to_ulong());
 
     context.set_details(boost::uuids::random_generator()(), ip_, remote_ep.port(), is_income);
-    LOG_PRINT_L3("[sock " << socket_.native_handle() << "] new connection from " << print_connection_context_short(context) <<
-      " to " << local_ep.address().to_string() << ':' << local_ep.port() <<
-      ", total sockets objects " << m_ref_sockets_count);
+    context.m_last_send = context.m_last_recv = time(NULL);
+   
+    LOG_PRINT_L3("[sock " << socket_.native_handle() << "] new connection, remote end_point: " << print_connection_context_short(context) <<
+        " local end_point: " << local_ep.address().to_string() << ':' << local_ep.port() <<
+        ", total sockets objects " << m_ref_sockets_count);
 
-    if(m_pfilter && !m_pfilter->is_remote_ip_allowed(context.m_remote_ip))
+    if(is_income && m_pfilter && !m_pfilter->is_remote_ip_allowed(context.m_remote_ip))
     {
-      LOG_PRINT_L2("[sock " << socket_.native_handle() << "] ip denied " << string_tools::get_ip_string_from_int32(context.m_remote_ip) << ", shutdowning connection");
+      LOG_PRINT_L0("[sock " << socket_.native_handle() << "] ip denied " << string_tools::get_ip_string_from_int32(context.m_remote_ip) << ", shutdowning connection");
       close();
       return false;
     }
@@ -136,6 +145,7 @@ PRAGMA_WARNING_DISABLE_VS(4355)
         boost::bind(&connection<t_protocol_handler>::handle_read, self,
           boost::asio::placeholders::error,
           boost::asio::placeholders::bytes_transferred)));
+
 
     return true;
 
@@ -211,8 +221,8 @@ PRAGMA_WARNING_DISABLE_VS(4355)
     std::size_t bytes_transferred)
   {
     TRY_ENTRY();
-    LOG_PRINT_L4("[sock " << socket_.native_handle() << "] Async read calledback.");
-    
+    LOG_PRINT_L4("[sock " << socket_.native_handle() << "] Assync read calledback.");
+
     if (!e)
     {
       LOG_PRINT("[sock " << socket_.native_handle() << "] RECV " << bytes_transferred, LOG_LEVEL_4);
@@ -239,7 +249,7 @@ PRAGMA_WARNING_DISABLE_VS(4355)
             boost::bind(&connection<t_protocol_handler>::handle_read, connection<t_protocol_handler>::shared_from_this(),
               boost::asio::placeholders::error,
               boost::asio::placeholders::bytes_transferred)));
-        LOG_PRINT_L4("[sock " << socket_.native_handle() << "]Async read requested.");
+        LOG_PRINT_L4("[sock " << socket_.native_handle() << "]Assync read requested.");
       }
     }else
     {
@@ -300,11 +310,11 @@ PRAGMA_WARNING_DISABLE_VS(4355)
     //some data should be wrote to stream
     //request complete
     
-    epee::critical_region_t<decltype(m_send_que_lock)> send_guard(m_send_que_lock);
+    CRITICAL_REGION_LOCAL_VAR(m_send_que_lock, send_guard);
     if(m_send_que.size() > ABSTRACT_SERVER_SEND_QUE_MAX_COUNT)
     {
-      send_guard.unlock();
-      LOG_ERROR("send que size is more than ABSTRACT_SERVER_SEND_QUE_MAX_COUNT(" << ABSTRACT_SERVER_SEND_QUE_MAX_COUNT << "), shutting down connection");
+      send_guard.unlock();//manual unlock
+      LOG_ERROR("send to [" << print_connection_context_short(context) << ", (" << (void*)this << ")] que size is more than ABSTRACT_SERVER_SEND_QUE_MAX_COUNT(" << ABSTRACT_SERVER_SEND_QUE_MAX_COUNT << "), shutting down connection");
       close();
       return false;
     }
@@ -329,8 +339,8 @@ PRAGMA_WARNING_DISABLE_VS(4355)
         boost::bind(&connection<t_protocol_handler>::handle_write, self, _1, _2)
         //)
         );
-      
-      LOG_PRINT_L4("[sock " << socket_.native_handle() << "] Async send requested " << m_send_que.front().size());
+
+      LOG_PRINT_L4("[sock " << socket_.native_handle() << "] Assync send requested " << m_send_que.front().size());
     }
 
     return true;
@@ -369,10 +379,16 @@ PRAGMA_WARNING_DISABLE_VS(4355)
   }
   //---------------------------------------------------------------------------------
   template<class t_protocol_handler>
+  bool connection<t_protocol_handler>::cancel()
+  {
+    return close();
+  }
+  //---------------------------------------------------------------------------------
+  template<class t_protocol_handler>
   void connection<t_protocol_handler>::handle_write(const boost::system::error_code& e, size_t cb)
   {
     TRY_ENTRY();
-    LOG_PRINT_L4("[sock " << socket_.native_handle() << "] Async send calledback " << cb);
+    LOG_PRINT_L4("[sock " << socket_.native_handle() << "] Assync send calledback " << cb);
 
     if (e)
     {
@@ -524,7 +540,7 @@ POP_WARNINGS
   }
   //---------------------------------------------------------------------------------
   template<class t_protocol_handler>
-  bool boosted_tcp_server<t_protocol_handler>::run_server(size_t threads_count, bool wait, const boost::thread::attributes& attrs)
+  bool boosted_tcp_server<t_protocol_handler>::run_server(size_t threads_count, bool wait)
   {
     TRY_ENTRY();
     m_threads_count = threads_count;
@@ -538,7 +554,7 @@ POP_WARNINGS
       for (std::size_t i = 0; i < threads_count; ++i)
       {
         boost::shared_ptr<boost::thread> thread(new boost::thread(
-          attrs, boost::bind(&boosted_tcp_server<t_protocol_handler>::worker_thread, this)));
+          boost::bind(&boosted_tcp_server<t_protocol_handler>::worker_thread, this)));
         m_threads.push_back(thread);
       }
       CRITICAL_REGION_END();
@@ -610,6 +626,8 @@ POP_WARNINGS
   {
     m_stop_signal_sent = true;
     TRY_ENTRY();
+    m_config.on_send_stop_signal();
+
     io_service_.stop();
     CATCH_ENTRY_L0("boosted_tcp_server<t_protocol_handler>::send_stop_signal()", void());
   }
@@ -633,9 +651,7 @@ POP_WARNINGS
         boost::bind(&boosted_tcp_server<t_protocol_handler>::handle_accept, this,
         boost::asio::placeholders::error));
 
-      bool r = conn->start(true, 1 < m_threads_count);
-      if (!r)
-        LOG_ERROR("[sock " << conn->socket().native_handle() << "] Failed to start connection, connections_count = " << m_sockets_count);
+      conn->start(true, 1 < m_threads_count);
     }else
     {
       LOG_ERROR("Some problems at accept: " << e.message() << ", connections_count = " << m_sockets_count);
@@ -693,13 +709,26 @@ POP_WARNINGS
     boost::unique_lock<boost::mutex> lock(local_shared_context->connect_mut);
     auto connect_callback = [](boost::system::error_code ec_, boost::shared_ptr<local_async_context> shared_context)
     {
-      shared_context->connect_mut.lock(); shared_context->ec = ec_; shared_context->connect_mut.unlock(); shared_context->cond.notify_one(); 
+      CRITICAL_SECTION_LOCK(shared_context->connect_mut);
+      shared_context->ec = ec_; 
+      CRITICAL_SECTION_UNLOCK(shared_context->connect_mut);
+      shared_context->cond.notify_one(); 
     };
 
     sock_.async_connect(remote_endpoint, boost::bind<void>(connect_callback, _1, local_shared_context));
     while(local_shared_context->ec == boost::asio::error::would_block)
     {
-      bool r = local_shared_context->cond.timed_wait(lock, boost::get_system_time() + boost::posix_time::milliseconds(conn_timeout));
+      bool r = false;
+      try{
+         r = local_shared_context->cond.timed_wait(lock, boost::get_system_time() + boost::posix_time::milliseconds(conn_timeout));
+      }
+      catch (...)
+      {
+        //timeout
+        sock_.close();
+        LOG_PRINT_L3("timed_wait throwed, " << adr << ":" << port << ", because of timeout (" << conn_timeout << ")");
+        return false;
+      }
       if(local_shared_context->ec == boost::asio::error::would_block && !r)
       {
         //timeout
@@ -724,10 +753,6 @@ POP_WARNINGS
       new_connection_l->get_context(conn_context);
       //new_connection_l.reset(new connection<t_protocol_handler>(io_service_, m_config, m_sockets_count, m_pfilter));
     }
-    else
-    {
-      LOG_ERROR("[sock " << new_connection_->socket().native_handle() << "] Failed to start connection, connections_count = " << m_sockets_count);
-    }
 
     return r;
 
@@ -740,7 +765,7 @@ POP_WARNINGS
     TRY_ENTRY();    
     connection_ptr new_connection_l(new connection<t_protocol_handler>(io_service_, m_config, m_sockets_count, m_pfilter) );
     boost::asio::ip::tcp::socket&  sock_ = new_connection_l->socket();
-    
+
     //////////////////////////////////////////////////////////////////////////
     boost::asio::ip::tcp::resolver resolver(io_service_);
     boost::asio::ip::tcp::resolver::query query(boost::asio::ip::tcp::v4(), adr, port);
@@ -783,7 +808,12 @@ POP_WARNINGS
           if(!sh_deadline->cancel())
           {
             cb(conn_context, boost::asio::error::operation_aborted);//this mean that deadline timer already queued callback with cancel operation, rare situation
-          }else
+          }else if(new_connection_l->is_shutdown())
+          {
+            //if deadline timer started and finished callback right after async_connect callback is started and before deadline timer sh_deadline->cancel() is called 
+            cb(conn_context, boost::asio::error::operation_aborted);
+          }
+          else
           {
             LOG_PRINT_L3("[sock " << new_connection_l->socket().native_handle() << "] Connected success to " << adr << ':' << port <<
               " from " << lep.address().to_string() << ':' << lep.port());
@@ -795,7 +825,6 @@ POP_WARNINGS
             }
             else
             {
-              LOG_PRINT_L3("[sock " << new_connection_l->socket().native_handle() << "] Failed to start connection to " << adr << ':' << port);
               cb(conn_context, boost::asio::error::fault);
             }
           }
@@ -811,4 +840,4 @@ POP_WARNINGS
   }
 }
 }
-PRAGMA_WARNING_POP
+POP_WARNINGS

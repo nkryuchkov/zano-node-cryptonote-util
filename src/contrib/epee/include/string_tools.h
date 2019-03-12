@@ -39,7 +39,9 @@
 #include <boost/asio.hpp>
 #include <boost/algorithm/string/compare.hpp>
 #include <boost/algorithm/string.hpp>
+#include <boost/filesystem.hpp>
 #include "warnings.h"
+#include "auto_val_init.h"
 
 
 #ifndef OUT
@@ -54,6 +56,8 @@ namespace epee
 {
 namespace string_tools
 {
+
+
 	inline std::wstring get_str_from_guid(const boost::uuids::uuid& rid)
 	{
 		return boost::lexical_cast<std::wstring>(rid);
@@ -86,6 +90,16 @@ namespace string_tools
 		}
 	}
 	//----------------------------------------------------------------------------
+  inline
+  std::string get_user_home_dir(std::string path)
+  {
+    const char* phomedir = getenv("HOME");
+    if (phomedir)
+      return phomedir;
+    else
+      return "~";
+  }
+  //----------------------------------------------------------------------------
 	inline bool get_guid_from_string(OUT boost::uuids::uuid& inetifer, const std::string& str_id)
 	{
 		std::string local_str_id = str_id;
@@ -109,6 +123,16 @@ namespace string_tools
 		}
 	}
 	//----------------------------------------------------------------------------
+  template< typename T >
+  std::string int_to_hex(T i)
+  {
+    std::stringstream stream;
+    stream << "0x"
+      << std::setfill('0') << std::setw(sizeof(T)* 2)
+      << std::hex << i;
+    return stream.str();
+  }
+  //----------------------------------------------------------------------------
   template<class CharT>
   std::basic_string<CharT> buff_to_hex(const std::basic_string<CharT>& s)
   {
@@ -136,6 +160,8 @@ namespace string_tools
     }
     return hexStream.str();
   }
+
+
   //----------------------------------------------------------------------------
   template<class CharT>
   bool parse_hexstr_to_binbuff(const std::basic_string<CharT>& s, std::basic_string<CharT>& res)
@@ -179,6 +205,14 @@ namespace string_tools
       buf.copy(reinterpret_cast<char *>(&t_pod), sizeof(t_pod_type));
       return true;
     }
+  }
+  //----------------------------------------------------------------------------
+  template<class t_pod_type>
+  t_pod_type parse_tpod_from_hex_string(const std::string& str_hash)
+  {
+    t_pod_type t_pod = AUTO_VAL_INIT(t_pod);
+    parse_tpod_from_hex_string(str_hash, t_pod);
+    return t_pod;
   }
   //----------------------------------------------------------------------------
 PUSH_WARNINGS
@@ -247,6 +281,14 @@ POP_WARNINGS
     
 	typedef std::map<std::string, std::string> command_line_params_a;
 	typedef std::map<std::wstring, std::wstring> command_line_params_w;
+
+  template<typename t_pod_data>
+  void apped_pod_to_strbuff(std::string& buff, const t_pod_data& pod)
+  {
+    buff.append(reinterpret_cast<const char*>(&pod), sizeof(pod));
+  }
+
+
 
 	template<class t_string>
 	bool parse_commandline(std::map<t_string, t_string>& res, int argc, char** argv)
@@ -506,10 +548,12 @@ POP_WARNINGS
 	//----------------------------------------------------------------------------
 	inline bool set_module_name_and_folder(const std::string& path_to_process_)
 	{
-    std::string path_to_process = path_to_process_;
-#ifdef _WIN32
-    path_to_process = get_current_module_path();
-#endif 
+                std::string path_to_process = path_to_process_;
+                boost::system::error_code ec;
+                path_to_process = boost::filesystem::canonical(path_to_process, ec).string();
+            #ifdef _WIN32
+                path_to_process = get_current_module_path();
+            #endif
 		std::string::size_type a = path_to_process.rfind( '\\' );
 		if(a == std::string::npos )
 		{
@@ -524,7 +568,6 @@ POP_WARNINGS
 			return false;
 
 	}
-
 	//----------------------------------------------------------------------------
 	inline bool trim_left(std::string& str)
 	{
@@ -619,7 +662,27 @@ POP_WARNINGS
 		return res;
 	}
 
-	//----------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
+  // replaces all non-ascii characters with mask_character
+  inline std::string mask_non_ascii_chars(const std::string& str, const char mask_character = '?')
+  {
+    std::string result;
+    result.reserve(str.size());
+    for (char c : str)
+    {
+      if ((unsigned char)c >= (unsigned char)' ' &&
+          (unsigned char)c <= (unsigned char)'~')
+      {
+        result += c;
+      }
+      else
+      {
+        result += mask_character;
+      }
+    }
+    return result;
+  }
+  //----------------------------------------------------------------------------
 #ifdef _WININET_
 	inline std::string get_string_from_systemtime(const SYSTEMTIME& sys_time)
 	{

@@ -1,14 +1,13 @@
+// Copyright (c) 2014-2018 Zano Project
+// Copyright (c) 2014-2018 The Louisdor Project
 // Copyright (c) 2012-2013 The Cryptonote developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <boost/config.hpp>
+#include <boost/multiprecision/cpp_int.hpp>
 
 #include "base58.h"
-
-#include <assert.h>
-#include <string>
-#include <vector>
-
 #include "crypto/hash.h"
 #include "int-util.h"
 #include "util.h"
@@ -86,13 +85,13 @@ namespace tools
         uint64_t res = 0;
         switch (9 - size)
         {
-        case 1:            res |= *data++;
-        case 2: res <<= 8; res |= *data++;
-        case 3: res <<= 8; res |= *data++;
-        case 4: res <<= 8; res |= *data++;
-        case 5: res <<= 8; res |= *data++;
-        case 6: res <<= 8; res |= *data++;
-        case 7: res <<= 8; res |= *data++;
+        case 1:            res |= *data++; BOOST_FALLTHROUGH;
+        case 2: res <<= 8; res |= *data++; BOOST_FALLTHROUGH;
+        case 3: res <<= 8; res |= *data++; BOOST_FALLTHROUGH;
+        case 4: res <<= 8; res |= *data++; BOOST_FALLTHROUGH;
+        case 5: res <<= 8; res |= *data++; BOOST_FALLTHROUGH;
+        case 6: res <<= 8; res |= *data++; BOOST_FALLTHROUGH;
+        case 7: res <<= 8; res |= *data++; BOOST_FALLTHROUGH;
         case 8: res <<= 8; res |= *data; break;
         default: assert(false);
         }
@@ -110,7 +109,7 @@ namespace tools
 
       void encode_block(const char* block, size_t size, char* res)
       {
-        assert(1 <= size && size <= sizeof(full_block_size));
+		assert(1 <= size && size <= full_block_size);
 
         uint64_t num = uint_8be_to_64(reinterpret_cast<const uint8_t*>(block), size);
         int i = static_cast<int>(encoded_block_sizes[size]) - 1;
@@ -139,12 +138,14 @@ namespace tools
           if (digit < 0)
             return false; // Invalid symbol
 
-          uint64_t product_hi;
-          uint64_t tmp = res_num + mul128(order, digit, &product_hi);
-          if (tmp < res_num || 0 != product_hi)
+          //uint64_t product_hi;
+          boost::multiprecision::uint128_t tmp = res_num;
+          tmp += boost::multiprecision::uint128_t(order) * digit;
+
+          if (tmp < res_num || tmp > std::numeric_limits<uint64_t>::max() )
             return false; // Overflow
 
-          res_num = tmp;
+          res_num = tmp.convert_to<uint64_t>();
           order *= alphabet_size; // Never overflows, 58^10 < 2^64
         }
 

@@ -4,8 +4,6 @@
 
 #pragma once
 
-#if defined(_MSC_VER)
+// in C++ no difference 'class' vs 'struct' except the default members access.
+// maybe be better to erase the 'POD_CLASS' macro completely?
 #define POD_CLASS struct
-#else
-#define POD_CLASS class
-#endif

@@ -7,7 +7,7 @@
 #include <string.h>
 
 #include "hash-ops.h"
-#include "initializer.h"
+//#include "initializer.h"
 #include "random.h"
 
 static void generate_system_random_bytes(size_t n, void *result);
@@ -20,7 +20,11 @@ static void generate_system_random_bytes(size_t n, void *result);
 static void generate_system_random_bytes(size_t n, void *result) {
   HCRYPTPROV prov;
 #define must_succeed(x) do if (!(x)) assert(0); while (0)
-  must_succeed(CryptAcquireContext(&prov, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT | CRYPT_SILENT));
+  if(!CryptAcquireContext(&prov, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT | CRYPT_SILENT))
+  {
+    int err = GetLastError();
+    assert(0);
+  }
   must_succeed(CryptGenRandom(prov, (DWORD)n, result));
   must_succeed(CryptReleaseContext(prov, 0));
 #undef must_succeed
@@ -64,12 +68,12 @@ static void generate_system_random_bytes(size_t n, void *result) {
 
 #endif
 
-static union hash_state state;
+/* static */ union hash_state state; // NOTE: 'static' is commented out here to be able to store/load global random generator state in tests (see also random_helper.h)
 
 #if !defined(NDEBUG)
 static volatile int curstate; /* To catch thread safety problems. */
 #endif
-
+/*
 FINALIZER(deinit_random) {
 #if !defined(NDEBUG)
   assert(curstate == 1);
@@ -77,17 +81,32 @@ FINALIZER(deinit_random) {
 #endif
   memset(&state, 0, sizeof(union hash_state));
 }
+*/
 
-INITIALIZER(init_random) {
+//INITIALIZER(init_random) {
+void init_random(void)
+{
   generate_system_random_bytes(32, &state);
-  REGISTER_FINALIZER(deinit_random);
+  //REGISTER_FINA\LIZER(deinit_random);
 #if !defined(NDEBUG)
   assert(curstate == 0);
   curstate = 1;
 #endif
 }
 
+
+void grant_random_initialize(void)
+{
+  static bool initalized = false;
+  if(!initalized)
+  {
+    init_random();
+    initalized = true;
+  }
+}
+
 void generate_random_bytes(size_t n, void *result) {
+  grant_random_initialize();
 #if !defined(NDEBUG)
   assert(curstate == 1);
   curstate = 2;

@@ -1,10 +1,11 @@
+// Copyright (c) 2014-2017 The The Louisdor Project
 // Copyright (c) 2012-2013 The Cryptonote developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #pragma once
 #include <memory>
-#include "serialization.h"
+//#include "serialization.h"
 
 template <template <bool> class Archive>
 inline bool do_serialize(Archive<false>& ar, std::string& str)

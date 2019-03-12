@@ -37,24 +37,10 @@ namespace crypto {
     return h;
   }
 
-  inline void cn_slow_hash(const void *data, std::size_t length, hash &hash) {
-    cn_slow_hash(data, length, reinterpret_cast<char *>(&hash));
-  }
-
   inline void tree_hash(const hash *hashes, std::size_t count, hash &root_hash) {
     tree_hash(reinterpret_cast<const char (*)[HASH_SIZE]>(hashes), count, reinterpret_cast<char *>(&root_hash));
   }
 
-  inline void tree_branch(const hash* hashes, std::size_t count, hash* branch)
-  {
-    tree_branch(reinterpret_cast<const char (*)[HASH_SIZE]>(hashes), count, reinterpret_cast<char (*)[HASH_SIZE]>(branch));
-  }
-
-  inline void tree_hash_from_branch(const hash* branch, std::size_t depth, const hash& leaf, const void* path, hash& root_hash)
-  {
-    tree_hash_from_branch(reinterpret_cast<const char (*)[HASH_SIZE]>(branch), depth, reinterpret_cast<const char*>(&leaf), path, reinterpret_cast<char*>(&root_hash));
-  }
-
 }
 
-CRYPTO_MAKE_HASHABLE(hash)
+POD_MAKE_HASHABLE(crypto, hash)

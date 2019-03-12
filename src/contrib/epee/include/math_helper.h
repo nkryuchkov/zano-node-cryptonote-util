@@ -51,7 +51,6 @@ namespace math_helper
 		average()
 		{
 			m_base = default_base;
-			m_last_avg_val = 0;
 		}
 
 		bool set_base()
@@ -88,15 +87,15 @@ namespace math_helper
 			return get_avg();
 		}
 
-		double get_avg()
+		double get_avg() const 
 		{
-			CRITICAL_REGION_LOCAL(m_lock);
+			CRITICAL_REGION_LOCAL( static_cast<critical_section&>(m_lock));
 
 			value_type vl = std::accumulate(m_list.begin(), m_list.end(), value_type(0));
 			if(m_list.size())
-				return m_last_avg_val = (double)(vl/m_list.size());
+				return (double)(vl/m_list.size());
 	
-			return m_last_avg_val = (double)vl;
+			return (double)vl;
 		}
 
 		value_type get_last_val()
@@ -109,10 +108,9 @@ namespace math_helper
 		}
 
 	private:
-		unsigned int m_base;
-		double m_last_avg_val;
+		unsigned int m_base;	
 		std::list<value_type> m_list;
-		critical_section m_lock;
+		mutable critical_section m_lock;
 	};
 
 	
@@ -229,15 +227,15 @@ namespace math_helper
 		}
 
 	}
-PRAGMA_WARNING_PUSH
-PRAGMA_GCC("GCC diagnostic ignored \"-Wstrict-aliasing\"")
+PUSH_WARNINGS
+DISABLE_GCC_WARNING(strict-aliasing)
   inline
   uint64_t generated_random_uint64()
   {
     boost::uuids::uuid id___ = boost::uuids::random_generator()();
     return  *reinterpret_cast<uint64_t*>(&id___.data[0]); //(*reinterpret_cast<uint64_t*>(&id___.data[0]) ^ *reinterpret_cast<uint64_t*>(&id___.data[8]));
   }
-PRAGMA_WARNING_POP
+POP_WARNINGS
 	template<int default_interval, bool start_immediate = true>
 	class once_a_time_seconds
 	{
@@ -268,5 +266,6 @@ PRAGMA_WARNING_POP
 		time_t m_last_worked_time;
 		time_t m_interval;
 	};
+
 }
 }

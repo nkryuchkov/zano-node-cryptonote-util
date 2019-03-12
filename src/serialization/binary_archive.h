@@ -1,3 +1,4 @@
+// Copyright (c) 2014-2017 The The Louisdor Project
 // Copyright (c) 2012-2013 The Cryptonote developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -17,6 +18,7 @@
 
 PUSH_WARNINGS
 DISABLE_VS_WARNINGS(4244)
+DISABLE_VS_WARNINGS(4100)
 
 //TODO: fix size_t warning in x32 platform
 
@@ -31,6 +33,7 @@ struct binary_archive_base
 
   explicit binary_archive_base(stream_type &s) : stream_(s) { }
 
+  bool is_saving_arch(){ return IsSaving; }
   void tag(const char *) { }
   void begin_object() { }
   void end_object() { }
@@ -60,6 +63,7 @@ struct binary_archive<false> : public binary_archive_base<std::istream, false>
     serialize_uint(*(typename boost::make_unsigned<T>::type *)&v);
   }
 
+
   template <class T>
   void serialize_uint(T &v, size_t width = sizeof(T))
   {
@@ -75,7 +79,9 @@ struct binary_archive<false> : public binary_archive_base<std::istream, false>
     }
     v = ret;
   }
-  void serialize_blob(void *buf, size_t len, const char *delimiter="") { stream_.read((char *)buf, len); }
+  void serialize_blob(void *buf, size_t len, const char *delimiter="") { 
+    stream_.read((char *)buf, len);
+  }
 
   template <class T>
   void serialize_varint(T &v)

@@ -1,3 +1,5 @@
+// Copyright (c) 2014-2018 Zano Project
+// Copyright (c) 2014-2018 The Louisdor Project
 // Copyright (c) 2012-2013 The Cryptonote developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -171,7 +173,14 @@ namespace command_line
   }
 
 
-  extern const arg_descriptor<bool> arg_help;
-  extern const arg_descriptor<bool> arg_version;
+  extern const arg_descriptor<bool>        arg_help;
+  extern const arg_descriptor<bool>        arg_version;
   extern const arg_descriptor<std::string> arg_data_dir;
+  extern const arg_descriptor<std::string> arg_config_file;
+  extern const arg_descriptor<bool>        arg_os_version;
+  extern const arg_descriptor<std::string> arg_log_dir;
+  extern const arg_descriptor<int>         arg_log_level;
+  extern const arg_descriptor<bool>        arg_console;
+  extern const arg_descriptor<bool>        arg_show_details;
+  extern const arg_descriptor<bool>        arg_show_rpc_autodoc;
 }

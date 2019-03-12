@@ -1,3 +1,5 @@
+// Copyright (c) 2014-2018 Zano Project
+// Copyright (c) 2014-2018 The Louisdor Project
 // Copyright (c) 2012-2013 The Cryptonote developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -7,13 +9,14 @@
 #include <boost/uuid/uuid.hpp>
 #include "serialization/keyvalue_serialization.h"
 #include "misc_language.h"
-#include "cryptonote_config.h"
+#include "currency_core/currency_config.h"
 #include "crypto/crypto.h"
 
 namespace nodetool
 {
   typedef boost::uuids::uuid uuid;
   typedef uint64_t peerid_type;
+  typedef std::string blobdata;
 
 #pragma pack (push, 1)
   
@@ -30,11 +33,17 @@ namespace nodetool
     time_t last_seen;
   };
 
+#define P2P_CONNECTION_ENTRY_VERSION_MAX_SIZE 50
+
   struct connection_entry
   {
     net_address adr;
     peerid_type id;
     bool is_income;
+    uint64_t time_started;
+    uint64_t last_recv;
+    uint64_t last_send;
+    char version[P2P_CONNECTION_ENTRY_VERSION_MAX_SIZE];
   };
 
 #pragma pack(pop)
@@ -86,7 +95,7 @@ namespace nodetool
   struct basic_node_data
   {
     uuid network_id;                   
-    uint64_t local_time;
+    int64_t local_time;
     uint32_t my_port;
     peerid_type peer_id;
 
@@ -104,6 +113,77 @@ namespace nodetool
   /************************************************************************/
   /*                                                                      */
   /************************************************************************/
+#define  ALERT_TYPE_CALM            1
+#define  ALERT_TYPE_URGENT          2
+#define  ALERT_TYPE_CRITICAL        3
+
+  /*
+  Don't put any strings into maintainers message: if secret key will
+  be stolen it can be used maliciously.
+  */
+  struct alert_condition
+  {
+    uint32_t if_build_less_then; //apply alert if build less then
+    uint8_t  alert_mode;
+
+    BEGIN_KV_SERIALIZE_MAP()
+      KV_SERIALIZE_N(if_build_less_then, "build")
+      KV_SERIALIZE_N(alert_mode, "mode")
+    END_KV_SERIALIZE_MAP()    
+  };
+
+  struct maintainers_info
+  {
+    uint64_t timestamp;
+    /*actual version*/
+    uint8_t  ver_major;
+    uint8_t  ver_minor;
+    uint8_t  ver_revision;
+    uint32_t build_no;
+    /*conditions for alerting*/
+    std::list<alert_condition> conditions;
+
+    BEGIN_KV_SERIALIZE_MAP()
+      KV_SERIALIZE_N(timestamp, "ts")
+      KV_SERIALIZE_N(ver_major, "maj")
+      KV_SERIALIZE_N(ver_minor, "min")
+      KV_SERIALIZE_N(ver_revision, "rev")
+      KV_SERIALIZE_N(build_no, "build")
+      KV_SERIALIZE_N(conditions, "cs")
+    END_KV_SERIALIZE_MAP()
+  };
+
+  struct maintainers_entry
+  {
+    blobdata maintainers_info_buff;
+    crypto::signature sign;
+
+    BEGIN_KV_SERIALIZE_MAP()
+      KV_SERIALIZE(maintainers_info_buff)
+      KV_SERIALIZE_VAL_POD_AS_BLOB(sign)
+    END_KV_SERIALIZE_MAP()
+  };
+
+  struct maintainers_info_external
+  {
+    uint8_t  ver_major;
+    uint8_t  ver_minor;
+    uint8_t  ver_revision;
+    uint32_t build_no;
+    uint8_t  mode;
+
+    BEGIN_KV_SERIALIZE_MAP()
+      KV_SERIALIZE(ver_major)
+      KV_SERIALIZE(ver_minor)
+      KV_SERIALIZE(ver_revision)
+      KV_SERIALIZE(build_no)
+      KV_SERIALIZE(mode)
+    END_KV_SERIALIZE_MAP()
+  };
+
+  /************************************************************************/
+  /*                                                                      */
+  /************************************************************************/
   template<class t_playload_type>
 	struct COMMAND_HANDSHAKE_T
 	{
@@ -113,10 +193,12 @@ namespace nodetool
     {
       basic_node_data node_data;
       t_playload_type payload_data;
+      maintainers_entry maintrs_entry;
 
       BEGIN_KV_SERIALIZE_MAP()
         KV_SERIALIZE(node_data)
         KV_SERIALIZE(payload_data)
+        KV_SERIALIZE(maintrs_entry)
       END_KV_SERIALIZE_MAP()
     };
 
@@ -124,12 +206,14 @@ namespace nodetool
     {
       basic_node_data node_data;
       t_playload_type payload_data;
-      std::list<peerlist_entry> local_peerlist; 
+      std::list<peerlist_entry> local_peerlist;
+      maintainers_entry maintrs_entry;
 
       BEGIN_KV_SERIALIZE_MAP()
         KV_SERIALIZE(node_data)
         KV_SERIALIZE(payload_data)
         KV_SERIALIZE_CONTAINER_POD_AS_BLOB(local_peerlist)
+        KV_SERIALIZE(maintrs_entry)
       END_KV_SERIALIZE_MAP()
     };
 	};
@@ -146,21 +230,26 @@ namespace nodetool
     struct request
     {
       t_playload_type payload_data;
+      maintainers_entry maintrs_entry;
+
       BEGIN_KV_SERIALIZE_MAP()
         KV_SERIALIZE(payload_data)
+        KV_SERIALIZE(maintrs_entry)
       END_KV_SERIALIZE_MAP()
     };
 
     struct response
     {
-      uint64_t local_time;
+      int64_t local_time;
       t_playload_type payload_data;
       std::list<peerlist_entry> local_peerlist; 
+      maintainers_entry maintrs_entry;
 
       BEGIN_KV_SERIALIZE_MAP()
         KV_SERIALIZE(local_time)
         KV_SERIALIZE(payload_data)
         KV_SERIALIZE_CONTAINER_POD_AS_BLOB(local_peerlist)
+        KV_SERIALIZE(maintrs_entry)
       END_KV_SERIALIZE_MAP()
     };
   };
@@ -200,10 +289,15 @@ namespace nodetool
     };
   };
 
+  
+#ifdef ALLOW_DEBUG_COMMANDS
+  //These commands are considered as insecure, and made in debug purposes for a limited lifetime. 
+  //Anyone who feel unsafe with this commands can disable the ALLOW_GET_STAT_COMMAND macro.
+
   struct proof_of_trust
   {
     peerid_type peer_id;
-    uint64_t    time;
+    int64_t    time;
     crypto::signature sign;
 
     BEGIN_KV_SERIALIZE_MAP()
@@ -214,11 +308,6 @@ namespace nodetool
   };
 
 
-#ifdef ALLOW_DEBUG_COMMANDS
-  //These commands are considered as insecure, and made in debug purposes for a limited lifetime.
-  //Anyone who feel unsafe with this commands can disable the ALLOW_GET_STAT_COMMAND macro.
-
-
   template<class payload_stat_info>
   struct COMMAND_REQUEST_STAT_INFO_T
   {
@@ -226,8 +315,10 @@ namespace nodetool
 
     struct request
     {
+      typename payload_stat_info::params pr;
       proof_of_trust tr;
       BEGIN_KV_SERIALIZE_MAP()
+        KV_SERIALIZE(pr)
         KV_SERIALIZE(tr)
       END_KV_SERIALIZE_MAP()    
     };
@@ -235,16 +326,16 @@ namespace nodetool
     struct response
     {
       std::string version;
-      std::string os_version;
       uint64_t connections_count;
       uint64_t incoming_connections_count;
+      uint64_t current_log_size;
       payload_stat_info payload_info;
 
       BEGIN_KV_SERIALIZE_MAP()
         KV_SERIALIZE(version)
-        KV_SERIALIZE(os_version)
         KV_SERIALIZE(connections_count)
         KV_SERIALIZE(incoming_connections_count)
+        KV_SERIALIZE(current_log_size)
         KV_SERIALIZE(payload_info)
       END_KV_SERIALIZE_MAP()    
     };
@@ -273,12 +364,14 @@ namespace nodetool
       std::list<connection_entry> connections_list; 
       peerid_type my_id;
       uint64_t    local_time;
+      uint64_t    up_time;
       BEGIN_KV_SERIALIZE_MAP()
         KV_SERIALIZE_CONTAINER_POD_AS_BLOB(local_peerlist_white)
         KV_SERIALIZE_CONTAINER_POD_AS_BLOB(local_peerlist_gray)
         KV_SERIALIZE_CONTAINER_POD_AS_BLOB(connections_list)
         KV_SERIALIZE(my_id)
         KV_SERIALIZE(local_time)
+        KV_SERIALIZE(up_time)
       END_KV_SERIALIZE_MAP()    
     };
   };
@@ -306,9 +399,74 @@ namespace nodetool
     };
   };
 
-#endif
+  /************************************************************************/
+  /*                                                                      */
+  /************************************************************************/
+  struct COMMAND_REQUEST_LOG
+  {
+    const static int ID = P2P_COMMANDS_POOL_BASE + 7;
 
+    struct request
+    {
+      proof_of_trust  tr;
+      uint64_t        log_chunk_offset;
+      uint64_t        log_chunk_size;
 
+      BEGIN_KV_SERIALIZE_MAP()
+        KV_SERIALIZE(tr)
+        KV_SERIALIZE(log_chunk_offset)
+        KV_SERIALIZE(log_chunk_size)
+      END_KV_SERIALIZE_MAP()
+    };
+
+    struct response
+    {
+      int64_t     current_log_level;
+      uint64_t    current_log_size;
+      std::string error;
+      std::string log_chunk;
+
+      BEGIN_KV_SERIALIZE_MAP()
+        KV_SERIALIZE(current_log_level)
+        KV_SERIALIZE(current_log_size)
+        KV_SERIALIZE(error)
+        KV_SERIALIZE(log_chunk)
+      END_KV_SERIALIZE_MAP()
+    };
+  };
+
+  /************************************************************************/
+  /*                                                                      */
+  /************************************************************************/
+  struct COMMAND_SET_LOG_LEVEL
+  {
+    const static int ID = P2P_COMMANDS_POOL_BASE + 8;
+
+    struct request
+    {
+      proof_of_trust  tr;
+      int64_t         new_log_level;
+
+      BEGIN_KV_SERIALIZE_MAP()
+        KV_SERIALIZE(tr)
+        KV_SERIALIZE(new_log_level)
+      END_KV_SERIALIZE_MAP()
+    };
+
+    struct response
+    {
+      int64_t     old_log_level;
+      int64_t     current_log_level;
+
+      BEGIN_KV_SERIALIZE_MAP()
+        KV_SERIALIZE(old_log_level)
+        KV_SERIALIZE(current_log_level)
+      END_KV_SERIALIZE_MAP()
+    };
+  };
+
+#endif // #ifdef ALLOW_DEBUG_COMMANDS
+    
 }
 
 

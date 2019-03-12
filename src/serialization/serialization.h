@@ -1,3 +1,4 @@
+// Copyright (c) 2014-2018 The The Louisdor Project
 // Copyright (c) 2012-2013 The Cryptonote developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -10,7 +11,9 @@
 #include <vector>
 #include <string>
 #include <boost/type_traits/is_integral.hpp>
-#include <boost/type_traits/integral_constant.hpp>
+
+#include "misc_log_ex.h"
+#include "binary_archive.h"
 
 template <class T>
 struct is_blob_type { typedef boost::false_type type; };
@@ -45,7 +48,7 @@ inline bool do_serialize(Archive &ar, T &v)
   return ::serializer<Archive, T>::serialize(ar, v);
 }
 
-#ifndef __GNUC__
+#if ( !defined(__GNUC__) && !(defined(_MSC_VER) && (_MSC_VER >= 1900)))
 #ifndef constexpr
 #define constexpr
 #endif
@@ -68,40 +71,44 @@ inline bool do_serialize(Archive &ar, T &v)
 
 
 #define VALUE(f) \
-  do { \
-    ar.tag(#f); \
-    bool r = ::do_serialize(ar, f); \
-    if (!r || !ar.stream().good()) return false; \
-  } while(0);
+do { \
+  ar.tag(#f); \
+  bool r = ::do_serialize(ar, f); \
+  if (!r || !ar.stream().good()) return false; \
+} while (0);
 #define FIELD_N(t, f) \
-  do { \
-    ar.tag(t); \
-    bool r = ::do_serialize(ar, f); \
-    if (!r || !ar.stream().good()) return false; \
-  } while(0);
+do { \
+  ar.tag(t); \
+  bool r = ::do_serialize(ar, f); \
+  if (!r || !ar.stream().good()) return false; \
+} while (0);
 #define FIELDS(f) \
-  do { \
-    bool r = ::do_serialize(ar, f); \
-    if (!r || !ar.stream().good()) return false; \
-  } while(0);
+  bool r = ::do_serialize(ar, f); \
+if (!r || !ar.stream().good()) return false;
 #define FIELD(f) \
-  do { \
-    ar.tag(#f); \
-    bool r = ::do_serialize(ar, f); \
-    if (!r || !ar.stream().good()) return false; \
-  } while(0);
+do { \
+  ar.tag(#f); \
+  bool r = ::do_serialize(ar, f); \
+  if (!r || !ar.stream().good()) return false; \
+} while (0);
 #define VARINT_FIELD(f) \
-  do { \
-    ar.tag(#f); \
-    ar.serialize_varint(f); \
-    if (!ar.stream().good()) return false; \
-  } while(0);
-#define VARINT_FIELD_N(t, f) \
-  do { \
-    ar.tag(t); \
-    ar.serialize_varint(f); \
-    if (!ar.stream().good()) return false; \
-  } while(0);
+do { \
+  ar.tag(#f); \
+  ar.serialize_varint(f); \
+  if (!ar.stream().good()) return false; \
+} while (0);
+
+#define DEFINE_SERIALIZATION_VERSION(v) inline static uint32_t get_serialization_veraion(){ return v; }
+
+
+#define VERSION_ENTRY(f) \
+do { \
+  ar.tag(#f); \
+  if (ar.is_saving_arch())  \
+    f = this->get_serialization_veraion(); \
+  bool r = ::do_serialize(ar, f); \
+  if (!r || !ar.stream().good()) return false; \
+} while (0);
 
 namespace serialization {
   namespace detail
@@ -151,5 +158,38 @@ namespace serialization {
   }
 }
 
+//---------------------------------------------------------------
+template<class t_object>
+bool t_serializable_object_to_blob(const t_object& to, std::string& b_blob)
+{
+  std::stringstream ss;
+  binary_archive<true> ba(ss);
+  bool r = ::serialization::serialize(ba, const_cast<t_object&>(to));
+  b_blob = ss.str();
+  return r;
+}
+//---------------------------------------------------------------
+template<class t_object>
+bool t_unserializable_object_from_blob(t_object& to, const std::string& blob)
+{
+  std::stringstream ss;
+  ss << blob;
+  binary_archive<false> ba(ss);
+  bool r = ::serialization::serialize(ba, to);
+  CHECK_AND_ASSERT_MES(r, false, "Failed to parse block from blob");
+  return true;
+}
+//---------------------------------------------------------------
+template<class t_object>
+std::string t_serializable_object_to_blob(const t_object& to)
+{
+  std::string b;
+  t_serializable_object_to_blob(to, b);
+  return b;
+}
+
+#include "serialize_basic_types.h"
 #include "string.h"
-#include "vector.h"
+#include "multiprecision.h"
+#include "stl_containers.h"
+

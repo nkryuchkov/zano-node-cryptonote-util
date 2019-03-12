@@ -1,19 +1,22 @@
+// Copyright (c) 2014-2018 Zano Project
+// Copyright (c) 2014-2018 The Louisdor Project
 // Copyright (c) 2012-2013 The Cryptonote developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <cstdio>
-
 #include "include_base_utils.h"
+#include "zlib_helper.h"
 using namespace epee;
 
 #include "util.h"
-#include "cryptonote_config.h"
+#include "currency_core/currency_config.h"
 
 #ifdef WIN32
 #include <windows.h>
 #include <shlobj.h>
 #include <strsafe.h>
+#include <lm.h>
+#pragma comment(lib, "netapi32.lib")
 #else 
 #include <sys/utsname.h>
 #endif
@@ -22,9 +25,119 @@ using namespace epee;
 namespace tools
 {
   std::function<void(void)> signal_handler::m_handler;
+  std::function<void(int, void*)>  signal_handler::m_fatal_handler;
 
 #ifdef WIN32
+
+  bool GetWinMajorMinorVersion(DWORD& major, DWORD& minor)
+  {
+	  bool bRetCode = false;
+	  LPBYTE pinfoRawData = 0;
+	  if (NERR_Success == NetWkstaGetInfo(NULL, 100, &pinfoRawData))
+	  {
+		  WKSTA_INFO_100* pworkstationInfo = (WKSTA_INFO_100*)pinfoRawData;
+		  major = pworkstationInfo->wki100_ver_major;
+		  minor = pworkstationInfo->wki100_ver_minor;
+		  ::NetApiBufferFree(pinfoRawData);
+		  bRetCode = true;
+	  }
+	  return bRetCode;
+  }
+
+
   std::string get_windows_version_display_string()
+  {
+	  std::string     winver;
+	  OSVERSIONINFOEX osver;
+	  SYSTEM_INFO     sysInfo;
+	  typedef void(__stdcall *GETSYSTEMINFO) (LPSYSTEM_INFO);
+
+#pragma warning (push)
+#pragma warning (disable:4996)
+		  memset(&osver, 0, sizeof(osver));
+	  osver.dwOSVersionInfoSize = sizeof(osver);
+	  GetVersionEx((LPOSVERSIONINFO)&osver);
+#pragma warning (pop)
+	  DWORD major = 0;
+	  DWORD minor = 0;
+	  if (GetWinMajorMinorVersion(major, minor))
+	  {
+		  osver.dwMajorVersion = major;
+		  osver.dwMinorVersion = minor;
+	  }
+	  else if (osver.dwMajorVersion == 6 && osver.dwMinorVersion == 2)
+	  {
+		  OSVERSIONINFOEXW osvi;
+		  ULONGLONG cm = 0;
+		  cm = VerSetConditionMask(cm, VER_MINORVERSION, VER_EQUAL);
+		  ZeroMemory(&osvi, sizeof(osvi));
+		  osvi.dwOSVersionInfoSize = sizeof(osvi);
+		  osvi.dwMinorVersion = 3;
+		  if (VerifyVersionInfoW(&osvi, VER_MINORVERSION, cm))
+		  {
+			  osver.dwMinorVersion = 3;
+		  }
+	  }
+
+	  GETSYSTEMINFO getSysInfo = (GETSYSTEMINFO)GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetNativeSystemInfo");
+	  if (getSysInfo == NULL)  getSysInfo = ::GetSystemInfo;
+	  getSysInfo(&sysInfo);
+
+	  if (osver.dwMajorVersion == 10 && osver.dwMinorVersion >= 0 && osver.wProductType != VER_NT_WORKSTATION)  winver = "Windows 10 Server";
+	  else if (osver.dwMajorVersion == 10 && osver.dwMinorVersion >= 0 && osver.wProductType == VER_NT_WORKSTATION)  winver = "Windows 10";
+    else if (osver.dwMajorVersion == 6 && osver.dwMinorVersion == 3 && osver.wProductType != VER_NT_WORKSTATION)  winver = "Windows Server 2012 R2";
+    else if (osver.dwMajorVersion == 6 && osver.dwMinorVersion == 3 && osver.wProductType == VER_NT_WORKSTATION)  winver = "Windows 8.1";
+    else if (osver.dwMajorVersion == 6 && osver.dwMinorVersion == 2 && osver.wProductType != VER_NT_WORKSTATION)  winver = "Windows Server 2012";
+    else if (osver.dwMajorVersion == 6 && osver.dwMinorVersion == 2 && osver.wProductType == VER_NT_WORKSTATION)  winver = "Windows 8";
+    else if (osver.dwMajorVersion == 6 && osver.dwMinorVersion == 1 && osver.wProductType != VER_NT_WORKSTATION)  winver = "Windows Server 2008 R2";
+    else if (osver.dwMajorVersion == 6 && osver.dwMinorVersion == 1 && osver.wProductType == VER_NT_WORKSTATION)  winver = "Windows 7";
+    else if (osver.dwMajorVersion == 6 && osver.dwMinorVersion == 0 && osver.wProductType != VER_NT_WORKSTATION)  winver = "Windows Server 2008";
+    else if (osver.dwMajorVersion == 6 && osver.dwMinorVersion == 0 && osver.wProductType == VER_NT_WORKSTATION)  winver = "Windows Vista";
+    else if (osver.dwMajorVersion == 5 && osver.dwMinorVersion == 2 && osver.wProductType == VER_NT_WORKSTATION
+		  &&  sysInfo.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64) 
+      winver = "Windows XP x64";
+	  else if (osver.dwMajorVersion == 5 && osver.dwMinorVersion == 2)   winver = "Windows Server 2003";
+    else if (osver.dwMajorVersion == 5 && osver.dwMinorVersion == 1)   winver = "Windows XP";
+    else if (osver.dwMajorVersion == 5 && osver.dwMinorVersion == 0)   winver = "Windows 2000";
+    else  winver = "unknown";
+
+	  if (osver.wServicePackMajor != 0)
+	  {
+		  std::string sp;
+		  char buf[128] = { 0 };
+		  sp = " Service Pack ";
+		  sprintf_s(buf, sizeof(buf), "%hd", osver.wServicePackMajor);
+		  sp.append(buf);
+		  winver += sp;
+	  }
+
+	  if (osver.dwMajorVersion >= 6)
+	  {
+		  if (sysInfo.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64)
+			  winver += ", 64-bit";
+		  else if (sysInfo.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_INTEL)
+			  winver += ", 32-bit";
+	  }
+
+
+	  winver += "("
+		  + std::to_string(osver.dwMajorVersion) + ":"
+		  + std::to_string(osver.dwMinorVersion) + ":"
+		  + std::to_string(osver.dwBuildNumber) + ":"
+		  + std::to_string(osver.dwPlatformId) + ":"
+		  + std::to_string(osver.wServicePackMajor) + ":"
+		  + std::to_string(osver.wServicePackMinor) + ":"
+		  + std::to_string(osver.wSuiteMask) + ":"
+		  + std::to_string(osver.wProductType) + ")";
+
+	  return winver;
+  }
+
+
+
+
+
+  std::string get_windows_version_display_string_()
   {
     typedef void (WINAPI *PGNSI)(LPSYSTEM_INFO);
     typedef BOOL (WINAPI *PGPI)(DWORD, DWORD, DWORD, DWORD, PDWORD);
@@ -291,14 +404,18 @@ std::string get_nix_version_display_string()
   std::string get_default_data_dir()
   {
     //namespace fs = boost::filesystem;
-    // Windows < Vista: C:\Documents and Settings\Username\Application Data\CRYPTONOTE_NAME
-    // Windows >= Vista: C:\Users\Username\AppData\Roaming\CRYPTONOTE_NAME
-    // Mac: ~/Library/Application Support/CRYPTONOTE_NAME
-    // Unix: ~/.CRYPTONOTE_NAME
+    // Windows < Vista: C:\Documents and Settings\Username\Application Data\CURRENCY_NAME_SHORT
+    // Windows >= Vista: C:\Users\Username\AppData\Roaming\CURRENCY_NAME_SHORT
+    // Mac: ~/Library/Application Support/CURRENCY_NAME_SHORT
+    // Unix: ~/.CURRENCY_NAME_SHORT
     std::string config_folder;
 #ifdef WIN32
     // Windows
-    config_folder = get_special_folder_path(CSIDL_APPDATA, true) + "/" + CRYPTONOTE_NAME;
+#ifdef _M_X64
+    config_folder = get_special_folder_path(CSIDL_APPDATA, true) + "/" + CURRENCY_NAME_SHORT;
+#else 
+    config_folder = get_special_folder_path(CSIDL_APPDATA, true) + "/" + CURRENCY_NAME_SHORT + "-x86";
+#endif 
 #else
     std::string pathRet;
     char* pszHome = getenv("HOME");
@@ -306,18 +423,67 @@ std::string get_nix_version_display_string()
       pathRet = "/";
     else
       pathRet = pszHome;
-#ifdef MAC_OSX
+#ifdef __APPLE__
     // Mac
-    pathRet /= "Library/Application Support";
-    config_folder =  (pathRet + "/" + CRYPTONOTE_NAME);
+    pathRet += "/Library/Application Support";
+    config_folder =  (pathRet + "/" + CURRENCY_NAME_SHORT);
 #else
     // Unix
-    config_folder = (pathRet + "/." + CRYPTONOTE_NAME);
+    config_folder = (pathRet + "/." + CURRENCY_NAME_SHORT);
 #endif
 #endif
 
     return config_folder;
   }
+  std::string get_host_computer_name()
+  {
+    char szname[1024] = "";
+    gethostname(szname, sizeof(szname));
+    szname[sizeof(szname)-1] = 0; //just to be sure
+    return szname;
+  }
+
+
+  std::string get_default_user_dir()
+  {
+    //namespace fs = boost::filesystem;
+    // Windows < Vista: C:\Documents and Settings\Username 
+    // Windows >= Vista: C:\Users\Username\AppData\Roaming\CURRENCY_NAME_SHORT
+    // Mac: ~/Library/Application Support/CURRENCY_NAME_SHORT
+    // Unix: ~/.CURRENCY_NAME_SHORT
+    std::string wallets_dir;
+#ifdef WIN32
+    // Windows
+    wallets_dir = get_special_folder_path(CSIDL_PERSONAL, true) + "/" + CURRENCY_NAME_BASE;
+#else
+    std::string pathRet;
+    char* pszHome = getenv("HOME");
+    if (pszHome == NULL || strlen(pszHome) == 0)
+      pathRet = "/";
+    else
+      pathRet = pszHome;
+
+    wallets_dir = (pathRet + "/" + CURRENCY_NAME_BASE);
+
+#endif
+    return wallets_dir;
+  }
+
+  std::string get_current_username()
+  {
+#ifdef WIN32
+    // Windows
+    const char* psz_username = getenv("USERNAME");
+#else
+    const char* psz_username = getenv("USER");
+#endif
+    if (psz_username == NULL || strlen(psz_username) == 0)
+      psz_username = "unknown_user";
+
+    return std::string(psz_username);
+  }
+
+
 
   bool create_directories_if_necessary(const std::string& path)
   {
@@ -361,4 +527,65 @@ std::string get_nix_version_display_string()
 #endif
     return std::error_code(code, std::system_category());
   }
+
+#define REQUEST_LOG_CHUNK_SIZE_MAX (10 * 1024 * 1024)
+
+  bool get_log_chunk_gzipped(uint64_t offset, uint64_t size, std::string& output, std::string& error)
+  {
+    if (size > REQUEST_LOG_CHUNK_SIZE_MAX)
+    {
+      error = std::string("size is exceeding the limit = ") + epee::string_tools::num_to_string_fast(REQUEST_LOG_CHUNK_SIZE_MAX);
+      return false;
+    }
+
+    std::string log_filename = epee::log_space::log_singletone::get_actual_log_file_path();
+    if (std::ifstream log{ log_filename, std::ifstream::ate | std::ifstream::binary })
+    {
+      uint64_t file_size = log.tellg();
+
+      if (offset >= file_size)
+      {
+        error = "offset is out of bounds";
+        return false;
+      }
+
+      if (offset + size > file_size)
+      {
+        error = "offset + size if out of bounds";
+        return false;
+      }
+
+      if (size != 0)
+      {
+        log.seekg(offset);
+        output.resize(size);
+        log.read(&output.front(), size);
+        uint64_t read_bytes = log.gcount();
+        if (read_bytes != size)
+        {
+          error = std::string("read bytes: ") + epee::string_tools::num_to_string_fast(read_bytes);
+          return false;
+        }
+
+        if (!epee::zlib_helper::pack(output))
+        {
+          error = "zlib pack failed";
+          return false;
+        }
+      }
+
+      return true;
+    }
+
+    error = std::string("can't open ") + log_filename;
+    return false;
+  }
+
+  uint64_t get_log_file_size()
+  {
+    std::string log_filename = epee::log_space::log_singletone::get_actual_log_file_path();
+    std::ifstream in(log_filename, std::ifstream::ate | std::ifstream::binary);
+    return static_cast<uint64_t>(in.tellg());
+  }
+
 }

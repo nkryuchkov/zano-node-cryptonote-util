@@ -1,3 +1,5 @@
+// Copyright (c) 2014-2018 Zano Project
+// Copyright (c) 2014-2018 The Louisdor Project
 // Copyright (c) 2012-2013 The Cryptonote developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -12,6 +14,28 @@
 
 namespace tools {
 
+
+  //---------------------------------------------------------------
+  template<typename T>
+  size_t get_varint_packed_size(T v)
+  {
+    if(v <= 127)
+      return 1;
+    else if(v <= 16383)
+      return 2;
+    else if(v <= 2097151)
+      return 3;
+    else if(v <= 268435455)
+      return 4;
+    else if(v <= 34359738367)
+      return 5;
+    else if(v <= 4398046511103)
+      return 6;
+    else if(v <= 562949953421311)
+      return 7;
+    else 
+      return 8;
+  }
     template<typename OutputIt, typename T>
     typename std::enable_if<std::is_integral<T>::value && std::is_unsigned<T>::value, void>::type
     write_varint(OutputIt &&dest, T i) {

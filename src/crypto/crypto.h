@@ -1,3 +1,5 @@
+// Copyright (c) 2014-2018 Zano Project
+// Copyright (c) 2014-2018 The Louisdor Project
 // Copyright (c) 2012-2013 The Cryptonote developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -7,10 +9,17 @@
 #include <cstddef>
 #include <mutex>
 #include <vector>
+#include <string>
 
 #include "common/pod-class.h"
 #include "generic-ops.h"
 #include "hash.h"
+#include "warnings.h"
+
+
+PUSH_WARNINGS
+DISABLE_CLANG_WARNING(unused-private-field)
+
 
 namespace crypto {
 
@@ -41,7 +50,7 @@ namespace crypto {
     friend class crypto_ops;
   };
 
-  POD_CLASS key_image: ec_point {
+  POD_CLASS key_image: public ec_point {
     friend class crypto_ops;
   };
 
@@ -64,6 +73,12 @@ namespace crypto {
 
     static void generate_keys(public_key &, secret_key &);
     friend void generate_keys(public_key &, secret_key &);
+    static void generate_brain_keys(public_key &, secret_key &, std::string& seed, size_t brain_wallet_seed_size);
+    friend void generate_brain_keys(public_key &, secret_key &, std::string& seed, size_t brain_wallet_seed_size);
+    static void keys_from_default(unsigned char* a_part, public_key &pub, secret_key &sec, size_t brain_wallet_seed_size);
+    friend void keys_from_default(unsigned char* a_part, public_key &pub, secret_key &sec, size_t brain_wallet_seed_size);
+    static void dependent_key(const secret_key& first, secret_key& second);
+    friend void dependent_key(const secret_key& first, secret_key& second);
     static bool check_key(const public_key &);
     friend bool check_key(const public_key &);
     static bool secret_key_to_public_key(const secret_key &, public_key &);
@@ -88,6 +103,9 @@ namespace crypto {
       const public_key *const *, std::size_t, const signature *);
     friend bool check_ring_signature(const hash &, const key_image &,
       const public_key *const *, std::size_t, const signature *);
+    friend bool validate_key_image(const key_image& ki);
+    static bool validate_key_image(const key_image& ki);
+
   };
 
   /* Generate a value filled with random bytes.
@@ -100,10 +118,35 @@ namespace crypto {
     return res;
   }
 
+  /* An adapter, to be used with std::shuffle, etc.
+   */
+  struct uniform_random_bit_generator
+  {
+    typedef uint64_t result_type;
+    static CONSTEXPR uint64_t min() { return 0; }
+    static CONSTEXPR uint64_t max() { return UINT64_MAX; }
+    uint64_t operator()() { return rand<uint64_t>(); }
+  };
+
+
   /* Generate a new key pair
    */
   inline void generate_keys(public_key &pub, secret_key &sec) {
     crypto_ops::generate_keys(pub, sec);
+  }
+
+  inline void generate_brain_keys(public_key &pub, secret_key &sec, std::string& seed, size_t brain_wallet_seed_size) {
+    crypto_ops::generate_brain_keys(pub, sec, seed,  brain_wallet_seed_size);
+  }
+
+
+  inline void keys_from_default(unsigned char* a_part, public_key &pub, secret_key &sec, size_t brain_wallet_seed_size)
+  {
+    crypto_ops::keys_from_default(a_part, pub, sec,  brain_wallet_seed_size);
+  }
+
+  inline void dependent_key(const secret_key& first, secret_key& second){
+    return crypto_ops::dependent_key(first, second);
   }
 
   /* Check a public key. Returns true if it is valid, false otherwise.
@@ -112,6 +155,9 @@ namespace crypto {
     return crypto_ops::check_key(key);
   }
 
+  inline bool validate_key_image(const key_image& ki){
+    return crypto_ops::validate_key_image(ki);
+  }
   /* Checks a private key and computes the corresponding public key.
    */
   inline bool secret_key_to_public_key(const secret_key &sec, public_key &pub) {
@@ -179,8 +225,14 @@ namespace crypto {
     const signature *sig) {
     return check_ring_signature(prefix_hash, image, pubs.data(), pubs.size(), sig);
   }
+
 }
 
-CRYPTO_MAKE_COMPARABLE(public_key)
-CRYPTO_MAKE_HASHABLE(key_image)
-CRYPTO_MAKE_COMPARABLE(signature)
+
+POD_MAKE_COMPARABLE(crypto, public_key)
+POD_MAKE_COMPARABLE(crypto, secret_key)
+POD_MAKE_HASHABLE(crypto, key_image)
+POD_MAKE_COMPARABLE(crypto, signature)
+POD_MAKE_COMPARABLE(crypto, key_derivation)
+POD_MAKE_LESS_OPERATOR(crypto, hash)
+POD_MAKE_LESS_OPERATOR(crypto, key_image)

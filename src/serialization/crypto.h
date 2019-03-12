@@ -1,10 +1,7 @@
+// Copyright (c) 2014-2017 The The Louisdor Project
 // Copyright (c) 2012-2013 The Cryptonote developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
-
-#pragma once
-
-#include <vector>
 
 #include "serialization.h"
 #include "debug_archive.h"
@@ -12,7 +9,7 @@
 #include "crypto/crypto.h"
 #include "crypto/hash.h"
 
-// read
+/*// read
 template <template <bool> class Archive>
 bool do_serialize(Archive<false> &ar, std::vector<crypto::signature> &v)
 {
@@ -49,7 +46,7 @@ bool do_serialize(Archive<true> &ar, std::vector<crypto::signature> &v)
   }
   ar.end_string();
   return true;
-}
+}*/
 
 BLOB_SERIALIZER(crypto::chacha8_iv);
 BLOB_SERIALIZER(crypto::hash);
